@@ -290,8 +290,16 @@
                 // Chuẩn bị PeerConnection nhưng chưa answer
                 createPeerConnection(goId, activeCallId);
                 try {
-                    const desc = new RTCSessionDescription({ type: 'offer', sdp: body.sdp });
-                    await peerConnection.setRemoteDescription(desc);
+                    const desc = (typeof body.sdp === 'string') ? { type: 'offer', sdp: body.sdp } : body.sdp;
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(desc));
+                    addLog('SYSTEM', 'Đã set Remote Offer');
+                    
+                    if (peerConnection.iceQueue) {
+                        for (const cand of peerConnection.iceQueue) {
+                            await peerConnection.addIceCandidate(cand);
+                        }
+                        peerConnection.iceQueue = [];
+                    }
                 } catch (e) {
                     addLog('ERROR', 'setRemoteDescription failed: ' + e.message);
                 }
@@ -300,8 +308,16 @@
                 statusEl.innerText = "📞 Đã kết nối";
                 statusEl.classList.add('text-green-400');
                 try {
-                    const desc = new RTCSessionDescription({ type: 'answer', sdp: body.sdp });
-                    await peerConnection.setRemoteDescription(desc);
+                    const desc = (typeof body.sdp === 'string') ? { type: 'answer', sdp: body.sdp } : body.sdp;
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(desc));
+                    addLog('SYSTEM', 'Đã set Remote Answer');
+
+                    if (peerConnection.iceQueue) {
+                        for (const cand of peerConnection.iceQueue) {
+                            await peerConnection.addIceCandidate(cand);
+                        }
+                        peerConnection.iceQueue = [];
+                    }
                 } catch (e) {
                     addLog('ERROR', 'setRemoteDescription (answer) failed: ' + e.message);
                 }
@@ -311,7 +327,14 @@
                     try {
                         const candidateData = (typeof body.candidate === 'string') ? JSON.parse(body.candidate) : body.candidate;
                         const candidate = new RTCIceCandidate(candidateData);
-                        await peerConnection.addIceCandidate(candidate);
+                        
+                        if (peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
+                            await peerConnection.addIceCandidate(candidate);
+                        } else {
+                            if (!peerConnection.iceQueue) peerConnection.iceQueue = [];
+                            peerConnection.iceQueue.push(candidate);
+                            addLog('SYSTEM', 'Đã queue 1 ICE Candidate (chờ remote description)');
+                        }
                     } catch (e) {
                         addLog('ERROR', 'Lỗi addIceCandidate: ' + e.message);
                     }
