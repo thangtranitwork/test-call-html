@@ -35,7 +35,7 @@
                 <div class="space-y-4">
                     <div>
                         <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">WebSocket URL</label>
-                        <input id="wsUrl" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 mt-1 focus:outline-none focus:border-blue-500" value="ws://localhost:8081/gs-guide-websocket/websocket">
+                        <input id="wsUrl" type="text" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 mt-1 focus:outline-none focus:border-blue-500" value="wss://dev-taixe.bship.vn/gs-guide-websocket/websocket">
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
@@ -98,6 +98,12 @@
                 
                 <div id="callStatus" class="mt-6 p-4 bg-slate-900/50 rounded-2xl text-center text-sm font-medium text-slate-400">
                     Chờ cuộc gọi...
+                </div>
+                
+                <!-- Audio Visualization -->
+                <div class="mt-4 overflow-hidden rounded-xl bg-slate-950/50 h-24 relative border border-slate-800">
+                    <canvas id="visualizer" class="w-full h-full"></canvas>
+                    <div id="visualizerOverlay" class="absolute inset-0 flex items-center justify-center text-[10px] text-slate-600 uppercase tracking-widest font-bold pointer-events-none">Remote Audio Visualizer</div>
                 </div>
             </div>
         </div>
@@ -194,6 +200,67 @@
             }
         }
 
+        let audioContext = null;
+        let analyser = null;
+        let dataArray = null;
+        let animationId = null;
+
+        function initVisualizer(stream) {
+            try {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 128;
+                source.connect(analyser);
+                
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                if (animationId) cancelAnimationFrame(animationId);
+                draw();
+                addLog('SYSTEM', 'Khởi tạo visualizer thành công.');
+            } catch (e) {
+                addLog('ERROR', 'Lỗi khởi tạo visualizer: ' + e.message);
+            }
+        }
+
+        function draw() {
+            animationId = requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArray);
+            
+            const canvas = document.getElementById('visualizer');
+            const canvasCtx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            canvasCtx.clearRect(0, 0, width, height);
+            
+            const barWidth = (width / dataArray.length) * 2.5;
+            let barHeight;
+            let x = 0;
+            
+            for(let i = 0; i < dataArray.length; i++) {
+                barHeight = (dataArray[i] / 255) * height;
+                
+                // Gradient-like colors
+                const r = 59;
+                const g = 130 + (i * 2);
+                const b = 246;
+                
+                canvasCtx.fillStyle = `rgb(${r},${g},${b})`;
+                canvasCtx.fillRect(x, height - barHeight, barWidth - 1, barHeight);
+                
+                x += barWidth;
+            }
+        }
+
         function createPeerConnection(goId, callId) {
             peerConnection = new RTCPeerConnection(configuration);
             
@@ -204,8 +271,10 @@
 
             // Handle remote stream
             peerConnection.ontrack = (event) => {
-                document.getElementById('remoteAudio').srcObject = event.streams[0];
+                const stream = event.streams[0];
+                document.getElementById('remoteAudio').srcObject = stream;
                 addLog('SYSTEM', 'Đã nhận được luồng âm thanh từ bên kia! 🎙️');
+                initVisualizer(stream);
             };
 
             // Handle ICE Candidates
@@ -342,12 +411,25 @@
             }
             if (ev === 'onCallHangup' || ev === 'onCallReject' || ev === 'onCallMissed') {
                 statusEl.innerText = "🔚 Cuộc gọi kết thúc (" + ev + ")";
-                statusEl.classList.remove('text-green-400');
                 document.getElementById('incomingModal').classList.add('hidden');
-                if (peerConnection) peerConnection.close();
-                peerConnection = null;
-                activeCallId = null;
+                cleanupCall();
             }
+        }
+
+        function cleanupCall() {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            activeCallId = null;
+            const canvas = document.getElementById('visualizer');
+            const canvasCtx = canvas.getContext('2d');
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('callStatus').classList.remove('text-green-400');
         }
 
         // Call Actions
